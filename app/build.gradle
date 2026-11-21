@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.neo10.gamecube.os7'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.neo10.gamecube.os7"
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName "1.0-os7-clean"
+    }
+
+    signingConfigs {
+        release {
+            def ksFile = file("keystore.jks")
+            if (ksFile.exists()) {
+                storeFile ksFile
+                storePassword System.getenv("KEYSTORE_PASS") ?: "neo10os7pass"
+                keyAlias System.getenv("KEY_ALIAS") ?: "neo10os7"
+                keyPassword System.getenv("KEY_PASS") ?: "neo10os7pass"
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            if (file("keystore.jks").exists()) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    compileOnly 'de.robv.android.xposed:api:82'
+}

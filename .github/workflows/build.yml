@@ -1,0 +1,47 @@
+name: Build Neo10 GameCube OS7 APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Generate signing keystore
+        run: |
+          if [ ! -f app/keystore.jks ]; then
+            keytool -genkeypair -v -keystore app/keystore.jks -storepass neo10os7pass -keypass neo10os7pass -alias neo10os7 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Neo10OS7, OU=GameCube, O=CleanModule"
+          fi
+
+      - name: Build Signed Release APK
+        run: gradle assembleRelease --no-daemon
+
+      - name: Prepare Output APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk out/Neo10_GameCube_OS7_Clean_v1.0.apk
+          ls -lh out/Neo10_GameCube_OS7_Clean_v1.0.apk
+
+      - name: Upload Signed APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Neo10_GameCube_OS7_Clean_v1.0_APK
+          path: out/Neo10_GameCube_OS7_Clean_v1.0.apk
+          if-no-files-found: error
