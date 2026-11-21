@@ -35,6 +35,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
     private static Object build144FrameProfile(ClassLoader cl, String pkg) {
         try {
+            String safePkg = (pkg == null || pkg.isEmpty()) ? "default" : pkg;
             Class<?> valCls = XposedHelpers.findClass("yb.b", cl);
             Constructor<?> valCtor = valCls.getConstructor(int.class, int.class, int.class);
 
@@ -58,8 +59,8 @@ public class MainHook implements IXposedHookLoadPackage {
                     String.class, int.class, int.class, int.class, String.class
             );
             return ctor.newInstance(
-                    pkg, pkg, "vivo",
-                    0, false,
+                    safePkg, safePkg, "vivo",
+                    1, false,
                     boostList, optiList, new HashMap<Integer, String>(),
                     85.0d, 75.0d,
                     0, 0,
@@ -91,7 +92,7 @@ public class MainHook implements IXposedHookLoadPackage {
             }
         };
 
-        // 1. Hardware & Feature Flags (H0 removed so built-in fan UI does not appear)
+        // 1. Hardware & Feature Flags (No H0 so built-in fan UI stays hidden)
         String commonA = "com.vivo.common.a";
         safeHook(cl, commonA, "z0", retTrue);
         safeHook(cl, commonA, "I1", retTrue);
@@ -140,7 +141,7 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] Auto Monster+ hook skip: " + t.getMessage());
         }
 
-        // 3. 144 FPS V3 Strategy Fix (cd.b gameIndex > 0 + of.i + of.k)
+        // 3. 144 FPS Unlock (Handles BOTH of.j and of.i + empty string "" in of.j.y)
         String utilsI0 = "com.vivo.gameassistant.utils.i0";
         safeHook(cl, utilsI0, "v0", String.class, retTrue);
         safeHook(cl, utilsI0, "w0", String.class, retTrue);
@@ -166,55 +167,58 @@ public class MainHook implements IXposedHookLoadPackage {
             safeHook(cl, "of.k", m, String.class, retTrue);
         }
 
-        safeHook(cl, "of.i", "e", String.class, new XC_MethodHook() {
+        XC_MethodHook synthCdbHook = new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
-                if (param.getResult() == null && param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
-                    String pkg = (String) param.args[0];
-                    if (!pkg.isEmpty()) {
-                        try {
-                            Class<?> infoCls = XposedHelpers.findClass("cd.b", cl);
-                            Object info = XposedHelpers.newInstance(infoCls);
-                            XposedHelpers.setIntField(info, "h", 1);
-                            XposedHelpers.setBooleanField(info, "i", false);
-                            param.setResult(info);
-                        } catch (Throwable t) {
-                            XposedBridge.log("[Neo10OS7] cd.b synth err: " + t.getMessage());
-                        }
+                if (param.getResult() == null) {
+                    try {
+                        Class<?> infoCls = XposedHelpers.findClass("cd.b", cl);
+                        Object info = XposedHelpers.newInstance(infoCls);
+                        XposedHelpers.setIntField(info, "h", 1);
+                        XposedHelpers.setBooleanField(info, "i", false);
+                        param.setResult(info);
+                    } catch (Throwable t) {
+                        XposedBridge.log("[Neo10OS7] cd.b synth err: " + t.getMessage());
                     }
                 }
             }
-        });
+        };
+        safeHook(cl, "of.i", "e", String.class, synthCdbHook);
+        safeHook(cl, "of.j", "e", String.class, synthCdbHook);
 
+        XC_MethodHook frameArrayFallbackHook = new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                Object res = param.getResult();
+                boolean empty = (res == null) || (res instanceof int[] && ((int[]) res).length < 2);
+                if (empty) {
+                    Object state = param.args[4];
+                    if (state != null && state.toString().contains("OPTIMIZE_POWER")) {
+                        param.setResult(new int[]{60, 120, 60});
+                    } else {
+                        param.setResult(new int[]{72, 144, 72});
+                    }
+                }
+            }
+        };
         safeHook(cl, "of.i", "d",
                 Context.class, int.class, int.class, int.class,
                 "com.vivo.gameassistant.frameinterpolation.FrameInterpolationState",
-                new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        Object res = param.getResult();
-                        boolean empty = (res == null) || (res instanceof int[] && ((int[]) res).length < 2);
-                        if (empty) {
-                            Object state = param.args[4];
-                            if (state != null && state.toString().contains("OPTIMIZE_POWER")) {
-                                param.setResult(new int[]{60, 120});
-                            } else {
-                                param.setResult(new int[]{72, 144});
-                            }
-                        }
-                    }
-                });
+                frameArrayFallbackHook);
+        safeHook(cl, "of.j", "d",
+                Context.class, int.class, int.class, int.class,
+                "com.vivo.gameassistant.frameinterpolation.FrameInterpolationState",
+                frameArrayFallbackHook);
 
         safeHook(cl, "of.j", "y", String.class, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
-                if (param.getResult() == null && param.args[0] instanceof String) {
-                    String pkg = (String) param.args[0];
-                    if (!pkg.isEmpty()) {
-                        Object synth = build144FrameProfile(cl, pkg);
-                        if (synth != null) {
-                            param.setResult(synth);
-                        }
+                if (param.getResult() == null) {
+                    String pkg = (param.args != null && param.args.length > 0 && param.args[0] instanceof String)
+                            ? (String) param.args[0] : "";
+                    Object synth = build144FrameProfile(cl, pkg);
+                    if (synth != null) {
+                        param.setResult(synth);
                     }
                 }
             }
@@ -262,6 +266,6 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] Thermal bypass skip: " + t.getMessage());
         }
 
-        XposedBridge.log("[Neo10OS7] v3 Clean Auto Monster+ & V3 144FPS hooks loaded.");
+        XposedBridge.log("[Neo10OS7] v4 Clean Auto Monster+ & 144FPS hooks loaded.");
     }
 }
