@@ -1,5 +1,7 @@
 package com.neo10.gamecube.os7;
 
+import android.content.Context;
+
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -89,26 +91,21 @@ public class MainHook implements IXposedHookLoadPackage {
             }
         };
 
-        // ============================================================
-        // 1. Hardware & Feature Flags (OriginOS 7 com.vivo.common.a)
-        // ============================================================
+        // 1. Hardware & Feature Flags (H0 removed so built-in fan UI does not appear)
         String commonA = "com.vivo.common.a";
-        safeHook(cl, commonA, "z0", retTrue); // ro.vivo.support_monster_plus
-        safeHook(cl, commonA, "I1", retTrue); // monster plus support cached
-        safeHook(cl, commonA, "J1", retTrue); // monster_plus_combine
-        safeHook(cl, commonA, "H0", retTrue); // cooling fan support
-        safeHook(cl, commonA, "o1", retTrue); // vivo.hardware.game.memc
-        safeHook(cl, commonA, "R0", retTrue); // support_fps
-        safeHook(cl, commonA, "S0", retTrue); // monsterplus_opt
+        safeHook(cl, commonA, "z0", retTrue);
+        safeHook(cl, commonA, "I1", retTrue);
+        safeHook(cl, commonA, "J1", retTrue);
+        safeHook(cl, commonA, "o1", retTrue);
+        safeHook(cl, commonA, "R0", retTrue);
+        safeHook(cl, commonA, "S0", retTrue);
 
-        // ============================================================
         // 2. Monster+ Sidebar + Auto Monster+ on Game Launch
-        // ============================================================
         String msPkg = "com.vivo.gameassistant.homegui.sideslide.panels.performance.modeshift";
-        safeHook(cl, msPkg + ".a", "a", retTrue);  // cooler connected = true
-        safeHook(cl, msPkg + ".o", "j", retTrue);  // back clip state = true
-        safeHook(cl, msPkg + ".o", "m", retTrue);  // already opened Monster+ = true
-        safeHook(cl, msPkg + ".o", "o", retTrue);  // monster+ combine active = true
+        safeHook(cl, msPkg + ".a", "a", retTrue);
+        safeHook(cl, msPkg + ".o", "j", retTrue);
+        safeHook(cl, msPkg + ".o", "m", retTrue);
+        safeHook(cl, msPkg + ".o", "o", retTrue);
         safeHook(cl, msPkg + ".ModeShiftBar", "f0", boolean.class, setArg0True);
         safeHook(cl, msPkg + ".ModeShiftBar", "K", boolean.class, boolean.class, setArg0True);
 
@@ -118,10 +115,8 @@ public class MainHook implements IXposedHookLoadPackage {
             final Object monster = XposedHelpers.getStaticObjectField(modeTypeCls, "MONSTER");
             final Object enhanced = XposedHelpers.getStaticObjectField(modeTypeCls, "ENHANCED");
 
-            // Sidebar plus button always maps to MONSTER_PLUS
             safeHook(cl, msPkg + ".a", "e", XC_MethodReplacement.returnConstant(monsterPlus));
 
-            // Auto-upgrade saved MONSTER/ENHANCED mode -> MONSTER_PLUS on game launch
             safeHook(cl, msPkg + ".o", "g", String.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
@@ -132,7 +127,6 @@ public class MainHook implements IXposedHookLoadPackage {
                 }
             });
 
-            // Upgrade MONSTER/ENHANCED shift calls -> MONSTER_PLUS automatically
             safeHook(cl, msPkg + ".o", "w", modeTypeCls, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
@@ -146,12 +140,10 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] Auto Monster+ hook skip: " + t.getMessage());
         }
 
-        // ============================================================
-        // 3. 144 FPS Quick Switch in Game Tools + Q Chip Zone Unlock
-        // ============================================================
+        // 3. 144 FPS V3 Strategy Fix (cd.b gameIndex > 0 + of.i + of.k)
         String utilsI0 = "com.vivo.gameassistant.utils.i0";
-        safeHook(cl, utilsI0, "v0", String.class, retTrue); // isGameSupportFrameInter
-        safeHook(cl, utilsI0, "w0", String.class, retTrue); // isGameSupportIris
+        safeHook(cl, utilsI0, "v0", String.class, retTrue);
+        safeHook(cl, utilsI0, "w0", String.class, retTrue);
         try {
             Class<?> cfgFuncCls = XposedHelpers.findClass(
                     "com.vivo.common.supportlist.pojo.ConfiguredFunction", cl);
@@ -169,7 +161,50 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] ConfiguredFunction skip: " + t.getMessage());
         }
 
-        // Exact OriginOS 7 classes: of.j (support list DB), of.h (V3 strategy)
+        String[] ofkMethods = {"b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"};
+        for (String m : ofkMethods) {
+            safeHook(cl, "of.k", m, String.class, retTrue);
+        }
+
+        safeHook(cl, "of.i", "e", String.class, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (param.getResult() == null && param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                    String pkg = (String) param.args[0];
+                    if (!pkg.isEmpty()) {
+                        try {
+                            Class<?> infoCls = XposedHelpers.findClass("cd.b", cl);
+                            Object info = XposedHelpers.newInstance(infoCls);
+                            XposedHelpers.setIntField(info, "h", 1);
+                            XposedHelpers.setBooleanField(info, "i", false);
+                            param.setResult(info);
+                        } catch (Throwable t) {
+                            XposedBridge.log("[Neo10OS7] cd.b synth err: " + t.getMessage());
+                        }
+                    }
+                }
+            }
+        });
+
+        safeHook(cl, "of.i", "d",
+                Context.class, int.class, int.class, int.class,
+                "com.vivo.gameassistant.frameinterpolation.FrameInterpolationState",
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        Object res = param.getResult();
+                        boolean empty = (res == null) || (res instanceof int[] && ((int[]) res).length < 2);
+                        if (empty) {
+                            Object state = param.args[4];
+                            if (state != null && state.toString().contains("OPTIMIZE_POWER")) {
+                                param.setResult(new int[]{60, 120});
+                            } else {
+                                param.setResult(new int[]{72, 144});
+                            }
+                        }
+                    }
+                });
+
         safeHook(cl, "of.j", "y", String.class, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
@@ -186,15 +221,14 @@ public class MainHook implements IXposedHookLoadPackage {
         });
         safeHook(cl, "of.j", "j", String.class, retTrue);
         safeHook(cl, "of.j", "k", String.class, retTrue);
-        safeHook(cl, "of.j", "l", String.class, retFalse); // not restricted to Monster+ only
+        safeHook(cl, "of.j", "l", String.class, retFalse);
         safeHook(cl, "of.h", "p", String.class, retTrue);
         safeHook(cl, "of.h", "q", String.class, retTrue);
         safeHook(cl, "of.h", "s", String.class, retFalse);
 
-        // FrameInterpolationController (h) & Helper (i)
         String fiH = "com.vivo.gameassistant.frameinterpolation.h";
         String fiI = "com.vivo.gameassistant.frameinterpolation.i";
-        safeHook(cl, fiH, "W0", retFalse); // bypass Monster+ requirement in SwitchPresenter
+        safeHook(cl, fiH, "W0", retFalse);
         safeHook(cl, fiH, "Q0", retFalse);
         safeHook(cl, fiI, "g", XC_MethodReplacement.returnConstant(new int[]{48, 144}));
         safeHook(cl, fiI, "m", String.class, retTrue);
@@ -204,16 +238,14 @@ public class MainHook implements IXposedHookLoadPackage {
                     "com.vivo.gameassistant.frameinterpolation.FrameInterpolationState", cl);
             safeHook(cl, fiH, "z0", fiStateCls, String.class, ret144);
             safeHook(cl, fiH, "B0", fiStateCls, String.class,
-                    XC_MethodReplacement.returnConstant(new int[]{60, 144}));
+                    XC_MethodReplacement.returnConstant(new int[]{72, 144}));
         } catch (Throwable t) {
             XposedBridge.log("[Neo10OS7] FIState skip: " + t.getMessage());
         }
 
-        // ============================================================
-        // 4. Thermal Overheat Bypass (Stops GameCube shutting down 144 FPS)
-        // ============================================================
-        safeHook(cl, fiH, "X0", double.class, retFalse); // isOverheat -> false
-        safeHook(cl, fiH, "V0", retTrue);                // skip temp check -> true
+        // 4. Thermal Overheat Bypass
+        safeHook(cl, fiH, "X0", double.class, retFalse);
+        safeHook(cl, fiH, "V0", retTrue);
         try {
             Class<?> reasonCls = XposedHelpers.findClass(
                     "com.vivo.gameassistant.frameinterpolation.ChangeFrameReason", cl);
@@ -222,7 +254,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 protected void beforeHookedMethod(MethodHookParam param) {
                     Object reason = param.args[0];
                     if (reason != null && reason.toString().contains("OVERHEAT")) {
-                        param.setResult(null); // Block overheat shutdown only
+                        param.setResult(null);
                     }
                 }
             });
@@ -230,6 +262,6 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] Thermal bypass skip: " + t.getMessage());
         }
 
-        XposedBridge.log("[Neo10OS7] v2 Auto Monster+ & 144FPS hooks loaded cleanly.");
+        XposedBridge.log("[Neo10OS7] v3 Clean Auto Monster+ & V3 144FPS hooks loaded.");
     }
 }
