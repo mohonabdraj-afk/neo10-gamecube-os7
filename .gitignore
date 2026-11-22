@@ -1,7 +1,6 @@
 .gradle/
 build/
 app/build/
-app/keystore.jks
 out/
 local.properties
 .idea/

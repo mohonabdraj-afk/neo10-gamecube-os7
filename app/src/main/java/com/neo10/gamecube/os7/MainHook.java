@@ -1,6 +1,7 @@
 package com.neo10.gamecube.os7;
 
 import android.content.Context;
+import android.net.Uri;
 
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
@@ -268,7 +269,7 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] Thermal bypass skip: " + t.getMessage());
         }
 
-        XposedBridge.log("[Neo10OS7] v6 GameCube hooks loaded.");
+        XposedBridge.log("[Neo10OS7] v8 GameCube hooks loaded.");
     }
 
     private void hookGameWatch(final ClassLoader cl) {
@@ -277,7 +278,7 @@ public class MainHook implements IXposedHookLoadPackage {
         final XC_MethodReplacement retOne = XC_MethodReplacement.returnConstant(1);
         final XC_MethodReplacement retZero = XC_MethodReplacement.returnConstant(0);
 
-        // Force Q2/Q3 hardware MEMC (EMEMC=1, IMEMC=1, GPUMemc=1, Passthrough=0) for ALL games
+        // 1. PicassoUseCaseXmlParser (Lh0/g): Enable EMEMC, IMEMC, GPUMemc and disable Passthrough
         safeHook(cl, "Lh0.g", "c", String.class, retOne);
         safeHook(cl, "Lh0.g", "g", String.class, retOne);
         safeHook(cl, "Lh0.g", "e", String.class, retOne);
@@ -285,21 +286,85 @@ public class MainHook implements IXposedHookLoadPackage {
         safeHook(cl, "Lh0.g", "o", String.class, retZero);
         safeHook(cl, "Lh0.g", "x", String.class, retTrue);
 
+        // 2. Stop GameWatch from clamping CPU speed down to 1.61 GHz (QUOTA_DIFF_CLAMP = 34004480)
+        safeHook(cl, "Lp2.h", "g", int.class, int[].class, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                if (param.args != null && param.args.length > 0 && param.args[0] instanceof Integer) {
+                    int cmd = (Integer) param.args[0];
+                    if (cmd == 34004480) {
+                        param.setResult(0);
+                    }
+                }
+            }
+        });
+
+        // 3. SrAndMemcManagerQ3 (Lj0/z0): Keep Q2 IC active (X1->true, b2->true) & block reset IC (f3)
         try {
-            Class<?> reqCls = XposedHelpers.findClass("Lj0.l$c", cl);
-            safeHook(cl, "Lj0.l", "V", reqCls, retTrue);
-            safeHook(cl, "Lj0.l", "N", reqCls, retTrue);
+            final Class<?> z0Cls = XposedHelpers.findClass("Lj0/z0", cl);
+            final Class<?> reqCls = XposedHelpers.findClass("Lj0/l$c", cl);
+
+            safeHook(cl, "Lj0/z0", "X1", int.class, int.class, reqCls, retTrue);
+            safeHook(cl, "Lj0/z0", "b2", int.class, retTrue);
+
+            safeHook(cl, "Lj0/z0", "f3", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    Object self = param.thisObject;
+                    if (self == null) {
+                        return;
+                    }
+                    try {
+                        Object reqM = XposedHelpers.getObjectField(self, "M");
+                        if (reqM != null && XposedHelpers.getIntField(reqM, "a") == 1) {
+                            param.setResult(null);
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+
+            safeHook(cl, "Lj0/z0", "s2", Uri.class, boolean.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    Object self = param.thisObject;
+                    if (self == null) {
+                        return;
+                    }
+                    try {
+                        XposedHelpers.setStaticBooleanField(z0Cls, "a2", true);
+                        XposedHelpers.setStaticBooleanField(z0Cls, "V1", true);
+                        XposedHelpers.setBooleanField(self, "Z0", true);
+                        XposedHelpers.setBooleanField(self, "b1", true);
+                        XposedHelpers.setBooleanField(self, "e1", true);
+                        XposedHelpers.setBooleanField(self, "J0", false);
+                        XposedHelpers.setIntField(self, "w1", 144);
+
+                        int m1 = XposedHelpers.getStaticIntField(z0Cls, "M1");
+                        if (m1 > 90) {
+                            XposedHelpers.setStaticIntField(z0Cls, "M1", 90);
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log("[Neo10OS7] z0.s2 field patch err: " + t.getMessage());
+                    }
+                }
+            });
+
+            // 4. InterpolatedFpsAdjuster (Lj0/l): Enable Q2 hardware MEMC for all game indices
+            safeHook(cl, "Lj0/l", "V", reqCls, retTrue);
+            safeHook(cl, "Lj0/l", "N", reqCls, retTrue);
         } catch (Throwable t) {
-            XposedBridge.log("[Neo10OS7] GameWatch l$c skip: " + t.getMessage());
+            XposedBridge.log("[Neo10OS7] GameWatch Q2 hook skip: " + t.getMessage());
         }
 
-        safeHook(cl, "Lj0.l", "a0", int.class, retTrue);
-        safeHook(cl, "Lj0.l", "f0", int.class, retTrue);
+        safeHook(cl, "Lj0/l", "a0", int.class, retTrue);
+        safeHook(cl, "Lj0/l", "f0", int.class, retTrue);
 
+        // 5. Block GameWatch thermal FPS & Q2 MEMC throttling
         safeHook(cl, "Lj0.l", "y0", double.class, boolean.class, retFalse);
         safeHook(cl, "Lj0.z0", "p3", double.class, boolean.class, retFalse);
         safeHook(cl, "Lj0.z0", "u3", double.class, boolean.class, retFalse);
 
-        XposedBridge.log("[Neo10OS7] v6 GameWatch Q2 MEMC (Lh0/g + Lj0/l + Lj0/z0) hooks loaded.");
+        XposedBridge.log("[Neo10OS7] v8 GameWatch CPU-Clamp-Fix + True Q2 MEMC hooks loaded.");
     }
 }

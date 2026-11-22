@@ -1,4 +1,4 @@
-name: Build Neo10 GameCube OS7 APK
+name: Build Game_Cube_Unlock_Neo10_OS7 APK
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Generate signing keystore
+      - name: Verify signing keystore
         run: |
           if [ ! -f app/keystore.jks ]; then
             keytool -genkeypair -v -keystore app/keystore.jks -storepass neo10os7pass -keypass neo10os7pass -alias neo10os7 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Neo10OS7, OU=GameCube, O=CleanModule"
@@ -36,12 +36,12 @@ jobs:
       - name: Prepare Output APK
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/release/app-release.apk out/Neo10_GameCube_OS7_Clean_v1.0.apk
-          ls -lh out/Neo10_GameCube_OS7_Clean_v1.0.apk
+          cp app/build/outputs/apk/release/app-release.apk out/Game_Cube_Unlock_Neo10_OS7.apk
+          ls -lh out/Game_Cube_Unlock_Neo10_OS7.apk
 
       - name: Upload Signed APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Neo10_GameCube_OS7_Clean_v1.0_APK
-          path: out/Neo10_GameCube_OS7_Clean_v1.0.apk
+          name: Game_Cube_Unlock_Neo10_OS7_APK
+          path: out/Game_Cube_Unlock_Neo10_OS7.apk
           if-no-files-found: error
