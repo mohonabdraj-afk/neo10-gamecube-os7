@@ -10,8 +10,8 @@ android {
         applicationId "com.neo10.gamecube.os7"
         minSdk 29
         targetSdk 35
-        versionCode 1
-        versionName "1.0-os7-clean"
+        versionCode 9
+        versionName "1.9-os7-q2"
     }
 
     signingConfigs {

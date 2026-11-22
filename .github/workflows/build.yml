@@ -24,11 +24,9 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Verify signing keystore
+      - name: Verify permanent signing keystore
         run: |
-          if [ ! -f app/keystore.jks ]; then
-            keytool -genkeypair -v -keystore app/keystore.jks -storepass neo10os7pass -keypass neo10os7pass -alias neo10os7 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Neo10OS7, OU=GameCube, O=CleanModule"
-          fi
+          ls -lh app/keystore.jks
 
       - name: Build Signed Release APK
         run: gradle assembleRelease --no-daemon

@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Neo10GameCubeOS7"
+rootProject.name = "Game_Cube_Unlock_Neo10_OS7"
 include ':app'
