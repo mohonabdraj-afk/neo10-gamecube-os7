@@ -60,7 +60,7 @@ public class MainHook implements IXposedHookLoadPackage {
             );
             return ctor.newInstance(
                     safePkg, safePkg, "vivo",
-                    1, false,
+                    9, false,
                     boostList, optiList, new HashMap<Integer, String>(),
                     85.0d, 75.0d,
                     0, 0,
@@ -74,11 +74,17 @@ public class MainHook implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
-        if (lpparam == null || !"com.vivo.gamecube".equals(lpparam.packageName)) {
+        if (lpparam == null || lpparam.packageName == null) {
             return;
         }
+        if ("com.vivo.gamecube".equals(lpparam.packageName)) {
+            hookGameCube(lpparam.classLoader);
+        } else if ("com.vivo.gamewatch".equals(lpparam.packageName)) {
+            hookGameWatch(lpparam.classLoader);
+        }
+    }
 
-        final ClassLoader cl = lpparam.classLoader;
+    private void hookGameCube(final ClassLoader cl) {
         final XC_MethodReplacement retTrue = XC_MethodReplacement.returnConstant(Boolean.TRUE);
         final XC_MethodReplacement retFalse = XC_MethodReplacement.returnConstant(Boolean.FALSE);
         final XC_MethodReplacement ret144 = XC_MethodReplacement.returnConstant(144);
@@ -141,7 +147,7 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] Auto Monster+ hook skip: " + t.getMessage());
         }
 
-        // 3. 144 FPS Unlock (Handles BOTH of.j and of.i + empty string "" in of.j.y)
+        // 3. 144 FPS Unlock with Q2 Hardware gameIndex = 9
         String utilsI0 = "com.vivo.gameassistant.utils.i0";
         safeHook(cl, utilsI0, "v0", String.class, retTrue);
         safeHook(cl, utilsI0, "w0", String.class, retTrue);
@@ -174,7 +180,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     try {
                         Class<?> infoCls = XposedHelpers.findClass("cd.b", cl);
                         Object info = XposedHelpers.newInstance(infoCls);
-                        XposedHelpers.setIntField(info, "h", 1);
+                        XposedHelpers.setIntField(info, "h", 9);
                         XposedHelpers.setBooleanField(info, "i", false);
                         param.setResult(info);
                     } catch (Throwable t) {
@@ -247,7 +253,7 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] FIState skip: " + t.getMessage());
         }
 
-        // 4. Thermal Overheat Bypass
+        // 4. Thermal Overheat Bypass in GameCube
         safeHook(cl, fiH, "X0", double.class, retFalse);
         safeHook(cl, fiH, "V0", retTrue);
         try {
@@ -266,6 +272,29 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] Thermal bypass skip: " + t.getMessage());
         }
 
-        XposedBridge.log("[Neo10OS7] v4 Clean Auto Monster+ & 144FPS hooks loaded.");
+        XposedBridge.log("[Neo10OS7] v5 GameCube hooks loaded.");
+    }
+
+    private void hookGameWatch(final ClassLoader cl) {
+        final XC_MethodReplacement retTrue = XC_MethodReplacement.returnConstant(Boolean.TRUE);
+        final XC_MethodReplacement retFalse = XC_MethodReplacement.returnConstant(Boolean.FALSE);
+
+        try {
+            Class<?> reqCls = XposedHelpers.findClass("Lj0.l$c", cl);
+            safeHook(cl, "Lj0.l", "V", reqCls, retTrue);
+            safeHook(cl, "Lj0.l", "N", reqCls, retTrue);
+        } catch (Throwable t) {
+            XposedBridge.log("[Neo10OS7] GameWatch l$c skip: " + t.getMessage());
+        }
+
+        safeHook(cl, "Lj0.l", "a0", int.class, retTrue);
+        safeHook(cl, "Lj0.l", "f0", int.class, retTrue);
+
+        // Block GameWatch thermal FPS & Q2 MEMC throttling
+        safeHook(cl, "Lj0.l", "y0", double.class, boolean.class, retFalse);
+        safeHook(cl, "Lj0.z0", "p3", double.class, boolean.class, retFalse);
+        safeHook(cl, "Lj0.z0", "u3", double.class, boolean.class, retFalse);
+
+        XposedBridge.log("[Neo10OS7] v5 GameWatch Q2 MEMC & thermal hooks loaded.");
     }
 }

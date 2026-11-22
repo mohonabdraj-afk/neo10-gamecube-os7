@@ -2,5 +2,6 @@
 <resources>
     <string-array name="xposed_scope">
         <item>com.vivo.gamecube</item>
+        <item>com.vivo.gamewatch</item>
     </string-array>
 </resources>
