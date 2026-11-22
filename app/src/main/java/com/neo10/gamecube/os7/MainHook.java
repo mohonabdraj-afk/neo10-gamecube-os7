@@ -1,7 +1,9 @@
 package com.neo10.gamecube.os7;
 
+import android.content.ContentResolver;
 import android.content.Context;
 import android.net.Uri;
+import android.provider.Settings;
 
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
@@ -35,6 +37,28 @@ public class MainHook implements IXposedHookLoadPackage {
         return name.contains("FRAME") || name.contains("OPTIMIZE_POWER");
     }
 
+    private static void putSystemIfChanged(ContentResolver cr, String key, String val) {
+        try {
+            String cur = Settings.System.getString(cr, key);
+            if (!val.equals(cur)) {
+                Settings.System.putString(cr, key, val);
+            }
+        } catch (Throwable t) {
+            XposedBridge.log("[Neo10OS7] System put fail " + key + ": " + t.getMessage());
+        }
+    }
+
+    private static void putGlobalIfChanged(ContentResolver cr, String key, String val) {
+        try {
+            String cur = Settings.Global.getString(cr, key);
+            if (!val.equals(cur)) {
+                Settings.Global.putString(cr, key, val);
+            }
+        } catch (Throwable t) {
+            XposedBridge.log("[Neo10OS7] Global put fail " + key + ": " + t.getMessage());
+        }
+    }
+
     private static Object build144FrameProfile(ClassLoader cl, String pkg) {
         try {
             String safePkg = (pkg == null || pkg.isEmpty()) ? "default" : pkg;
@@ -62,11 +86,11 @@ public class MainHook implements IXposedHookLoadPackage {
             );
             return ctor.newInstance(
                     safePkg, safePkg, "vivo",
-                    9, false,
+                    1, false,
                     boostList, optiList, new HashMap<Integer, String>(),
                     85.0d, 75.0d,
                     0, 0,
-                    "", 144, 72, 144, "fixed"
+                    "", 144, 48, 144, "fixed"
             );
         } catch (Throwable t) {
             XposedBridge.log("[Neo10OS7] Profile synth err: " + t.getMessage());
@@ -100,6 +124,7 @@ public class MainHook implements IXposedHookLoadPackage {
             }
         };
 
+        // 1. Hardware & Feature Flags (No H0 so built-in fan UI stays hidden)
         String commonA = "com.vivo.common.a";
         safeHook(cl, commonA, "z0", retTrue);
         safeHook(cl, commonA, "I1", retTrue);
@@ -108,6 +133,7 @@ public class MainHook implements IXposedHookLoadPackage {
         safeHook(cl, commonA, "R0", retTrue);
         safeHook(cl, commonA, "S0", retTrue);
 
+        // 2. Monster+ Sidebar + Auto Monster+ on Game Launch
         String msPkg = "com.vivo.gameassistant.homegui.sideslide.panels.performance.modeshift";
         safeHook(cl, msPkg + ".a", "a", retTrue);
         safeHook(cl, msPkg + ".o", "j", retTrue);
@@ -147,6 +173,7 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] Auto Monster+ hook skip: " + t.getMessage());
         }
 
+        // 3. Universal 144 FPS UI Unlock in GameBar (All Games)
         String utilsI0 = "com.vivo.gameassistant.utils.i0";
         safeHook(cl, utilsI0, "v0", String.class, retTrue);
         safeHook(cl, utilsI0, "w0", String.class, retTrue);
@@ -179,7 +206,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     try {
                         Class<?> infoCls = XposedHelpers.findClass("cd.b", cl);
                         Object info = XposedHelpers.newInstance(infoCls);
-                        XposedHelpers.setIntField(info, "h", 9);
+                        XposedHelpers.setIntField(info, "h", 1);
                         XposedHelpers.setBooleanField(info, "i", false);
                         param.setResult(info);
                     } catch (Throwable t) {
@@ -199,9 +226,9 @@ public class MainHook implements IXposedHookLoadPackage {
                 if (empty) {
                     Object state = param.args[4];
                     if (state != null && state.toString().contains("OPTIMIZE_POWER")) {
-                        param.setResult(new int[]{60, 120, 60});
+                        param.setResult(new int[]{30, 120, 60});
                     } else {
-                        param.setResult(new int[]{72, 144, 72});
+                        param.setResult(new int[]{48, 144, 60});
                     }
                 }
             }
@@ -247,11 +274,58 @@ public class MainHook implements IXposedHookLoadPackage {
                     "com.vivo.gameassistant.frameinterpolation.FrameInterpolationState", cl);
             safeHook(cl, fiH, "z0", fiStateCls, String.class, ret144);
             safeHook(cl, fiH, "B0", fiStateCls, String.class,
-                    XC_MethodReplacement.returnConstant(new int[]{72, 144}));
+                    XC_MethodReplacement.returnConstant(new int[]{48, 144}));
         } catch (Throwable t) {
             XposedBridge.log("[Neo10OS7] FIState skip: " + t.getMessage());
         }
 
+        // 4. CORE FIX (Blue River Exact Mechanism):
+        //    Intercept IrisUtils.setFrameInterpolationConfig (com.vivo.common.utils.s0.b)
+        //    Send pid=0 global Q2 MEMC format ("1:1:0:48:144") + nova_memc_status=1 + touch_rate=180
+        //    so SurfaceFlinger never throttles PUBG's PID and NovaMemcDisplayEnhance runs at true 144Hz!
+        safeHook(cl, "com.vivo.common.utils.s0", "b",
+                Context.class, boolean.class, int.class, int.class,
+                int[].class, int[].class, int[].class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (param.args == null || param.args.length < 7 || !(param.args[0] instanceof Context)) {
+                            return;
+                        }
+                        Context ctx = (Context) param.args[0];
+                        boolean isOn = (Boolean) param.args[1];
+                        int[] targetFrames = (param.args[5] instanceof int[]) ? (int[]) param.args[5] : null;
+                        ContentResolver cr = ctx.getContentResolver();
+
+                        if (isOn) {
+                            int maxTarget = 144;
+                            if (targetFrames != null && targetFrames.length > 0) {
+                                int m = 0;
+                                for (int tf : targetFrames) {
+                                    if (tf > m) {
+                                        m = tf;
+                                    }
+                                }
+                                if (m > 0) {
+                                    maxTarget = m;
+                                }
+                            }
+                            String cmd = (maxTarget >= 144) ? "1:1:0:48:144" : "1:1:0:30:120";
+                            Settings.System.putString(cr, "gamecube_frame_interpolation", cmd);
+                            putSystemIfChanged(cr, "nova_memc_status", "1");
+                            putGlobalIfChanged(cr, "game_memc_request_touch_rate", "180");
+                            XposedBridge.log("[Neo10OS7] v10 Q2 Global MEMC ON -> " + cmd);
+                        } else {
+                            Settings.System.putString(cr, "gamecube_frame_interpolation", "0:-1:0:0:0");
+                            putSystemIfChanged(cr, "nova_memc_status", "0");
+                            putGlobalIfChanged(cr, "game_memc_request_touch_rate", "0");
+                            XposedBridge.log("[Neo10OS7] v10 Q2 Global MEMC OFF");
+                        }
+                        param.setResult(null);
+                    }
+                });
+
+        // 5. Thermal Overheat Bypass in GameCube
         safeHook(cl, fiH, "X0", double.class, retFalse);
         safeHook(cl, fiH, "V0", retTrue);
         try {
@@ -270,25 +344,14 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] Thermal bypass skip: " + t.getMessage());
         }
 
-        XposedBridge.log("[Neo10OS7] v9 GameCube hooks loaded cleanly.");
+        XposedBridge.log("[Neo10OS7] v10 GameCube BlueRiver-Q2 hooks loaded cleanly.");
     }
 
     private void hookGameWatch(final ClassLoader cl) {
-        final XC_MethodReplacement retTrue = XC_MethodReplacement.returnConstant(Boolean.TRUE);
         final XC_MethodReplacement retFalse = XC_MethodReplacement.returnConstant(Boolean.FALSE);
-        final XC_MethodReplacement retOne = XC_MethodReplacement.returnConstant(1);
-        final XC_MethodReplacement retZero = XC_MethodReplacement.returnConstant(0);
         final XC_MethodReplacement retZeroLong = XC_MethodReplacement.returnConstant(0L);
 
-        // 1. PicassoUseCaseXmlParser (h0.g): Enable EMEMC, IMEMC, GPUMemc and disable Passthrough
-        safeHook(cl, "h0.g", "c", String.class, retOne);
-        safeHook(cl, "h0.g", "g", String.class, retOne);
-        safeHook(cl, "h0.g", "e", String.class, retOne);
-        safeHook(cl, "h0.g", "s", String.class, retOne);
-        safeHook(cl, "h0.g", "o", String.class, retZero);
-        safeHook(cl, "h0.g", "x", String.class, retTrue);
-
-        // 2. Stop GameWatch from clamping CPU speed via QUOTA_DIFF_CLAMP (34004480)
+        // 1. Stop GameWatch from clamping CPU speed via QUOTA_DIFF_CLAMP (34004480)
         safeHook(cl, "p2.h", "g", int.class, int[].class, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
@@ -301,7 +364,7 @@ public class MainHook implements IXposedHookLoadPackage {
             }
         });
 
-        // 3. ThermalFpsAdjuster (m0.f): Prevent GameWatch thermal FPS cap
+        // 2. ThermalFpsAdjuster (m0.f): Prevent GameWatch thermal FPS cap
         try {
             Class<?> tfItemCls = XposedHelpers.findClass("m0.f$a", cl);
             safeHook(cl, "m0.f", "k", tfItemCls, retZeroLong);
@@ -309,72 +372,38 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log("[Neo10OS7] m0.f skip: " + t.getMessage());
         }
 
-        // 4. InterpolatedFpsAdjuster (j0.l - Q2 Chip) & SrAndMemcManagerQ3 (j0.z0)
-        try {
-            final Class<?> reqCls = XposedHelpers.findClass("j0.l$c", cl);
+        // 3. Block GameWatch thermal MEMC downgrade
+        safeHook(cl, "j0.l", "y0", double.class, boolean.class, retFalse);
+        safeHook(cl, "j0.z0", "p3", double.class, boolean.class, retFalse);
+        safeHook(cl, "j0.z0", "u3", double.class, boolean.class, retFalse);
 
-            // Q2 Chip core hooks (allow all games, enable low-latency FtFlags, disable Genshin 73Hz quirk)
-            safeHook(cl, "j0.l", "Y", int.class, int.class, reqCls, retTrue);
-            safeHook(cl, "j0.l", "V", reqCls, retTrue);
-            safeHook(cl, "j0.l", "N", reqCls, retTrue);
-            safeHook(cl, "j0.l", "c0", reqCls, retTrue);
-            safeHook(cl, "j0.l", "W", reqCls, retFalse);
-            safeHook(cl, "j0.l", "a0", int.class, retTrue);
-            safeHook(cl, "j0.l", "f0", int.class, retTrue);
-            safeHook(cl, "j0.l", "y0", double.class, boolean.class, retFalse);
-
-            // Q3/Q4 fallback manager hooks (j0.z0)
-            final Class<?> z0Cls = XposedHelpers.findClass("j0.z0", cl);
-            safeHook(cl, "j0.z0", "X1", int.class, int.class, reqCls, retTrue);
-            safeHook(cl, "j0.z0", "b2", int.class, retTrue);
-            safeHook(cl, "j0.z0", "p3", double.class, boolean.class, retFalse);
-            safeHook(cl, "j0.z0", "u3", double.class, boolean.class, retFalse);
-
-            safeHook(cl, "j0.z0", "f3", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
-                    Object self = param.thisObject;
-                    if (self == null) {
+        // 4. Sync nova_memc_status & game_memc_request_touch_rate from android.uid.system context
+        safeHook(cl, "j0.l$a", "onChange", boolean.class, Uri.class, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                try {
+                    Class<?> daCls = XposedHelpers.findClass("d.a", cl);
+                    Context ctx = (Context) XposedHelpers.callStaticMethod(daCls, "e");
+                    if (ctx == null) {
                         return;
                     }
-                    try {
-                        Object reqM = XposedHelpers.getObjectField(self, "M");
-                        if (reqM != null && XposedHelpers.getIntField(reqM, "a") == 1) {
-                            param.setResult(null);
-                        }
-                    } catch (Throwable ignored) {
-                    }
-                }
-            });
-
-            safeHook(cl, "j0.z0", "s2", Uri.class, boolean.class, new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
-                    Object self = param.thisObject;
-                    if (self == null) {
+                    ContentResolver cr = ctx.getContentResolver();
+                    String val = Settings.System.getString(cr, "gamecube_frame_interpolation");
+                    if (val == null) {
                         return;
                     }
-                    try {
-                        XposedHelpers.setStaticBooleanField(z0Cls, "a2", true);
-                        XposedHelpers.setStaticBooleanField(z0Cls, "V1", true);
-                        XposedHelpers.setBooleanField(self, "Z0", true);
-                        XposedHelpers.setBooleanField(self, "b1", true);
-                        XposedHelpers.setBooleanField(self, "e1", true);
-                        XposedHelpers.setBooleanField(self, "J0", false);
-                        XposedHelpers.setIntField(self, "w1", 144);
-
-                        int m1 = XposedHelpers.getStaticIntField(z0Cls, "M1");
-                        if (m1 > 90) {
-                            XposedHelpers.setStaticIntField(z0Cls, "M1", 90);
-                        }
-                    } catch (Throwable t) {
-                        XposedBridge.log("[Neo10OS7] z0.s2 field patch err: " + t.getMessage());
+                    if (val.startsWith("1:1:0:")) {
+                        putSystemIfChanged(cr, "nova_memc_status", "1");
+                        putGlobalIfChanged(cr, "game_memc_request_touch_rate", "180");
+                    } else if (val.startsWith("0:")) {
+                        putSystemIfChanged(cr, "nova_memc_status", "0");
+                        putGlobalIfChanged(cr, "game_memc_request_touch_rate", "0");
                     }
+                } catch (Throwable t) {
+                    XposedBridge.log("[Neo10OS7] GW sync skip: " + t.getMessage());
                 }
-            });
-        } catch (Throwable t) {
-            XposedBridge.log("[Neo10OS7] GameWatch j0.l/j0.z0 hook skip: " + t.getMessage());
-        }
+            }
+        });
 
         // 5. Diagnostic log for Q2 Hardware IC dispatch (e0.a.o type=258)
         safeHook(cl, "e0.a", "o", int.class, int[].class, new XC_MethodHook() {
@@ -391,6 +420,6 @@ public class MainHook implements IXposedHookLoadPackage {
             }
         });
 
-        XposedBridge.log("[Neo10OS7] v9 GameWatch Q2 MEMC + ThermalFps + CPU-Clamp hooks loaded cleanly.");
+        XposedBridge.log("[Neo10OS7] v10 GameWatch BlueRiver-Q2 sync & thermal hooks loaded cleanly.");
     }
 }
